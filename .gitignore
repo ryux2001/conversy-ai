@@ -1,0 +1,7 @@
+/docs
+.pnpm-store/
+.vscode/
+.env.local
+.env.example
+.env
+.env*
