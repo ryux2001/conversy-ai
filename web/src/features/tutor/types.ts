@@ -6,4 +6,7 @@ export interface TutorMessage {
   id: string;
   role: "user" | "tutor";
   content: string;
+  kind?: "correction";
+  targetMessageId?: string;
+  correction?: TutorFeedback;
 }

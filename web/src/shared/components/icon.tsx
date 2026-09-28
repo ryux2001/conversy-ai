@@ -9,7 +9,8 @@ export type IconName =
   | "arrow"
   | "check"
   | "retry"
-  | "person";
+  | "person"
+  | "menu";
 
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const common = {
@@ -48,5 +49,7 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
       return <svg {...common}><path d="M20 7v5h-5M4 17v-5h5" /><path d="M6.2 9A7 7 0 0 1 18 6l2 2m-16 8 2 2a7 7 0 0 0 11.8-3" /></svg>;
     case "person":
       return <svg {...common}><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /></svg>;
+    case "menu":
+      return <svg {...common}><path d="M4 7h16M4 12h16M4 17h16" /></svg>;
   }
 }

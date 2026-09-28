@@ -76,6 +76,9 @@ export function ChatWorkspace() {
           const tutorMessage: TutorMessage = {
             id: crypto.randomUUID(),
             role: "tutor",
+            kind: "correction",
+            targetMessageId: feedback.targetMessageId,
+            correction: feedback,
             content: canContrast
               ? `${copy.es.tutorCorrectionPrefix} “${original}”, ${copy.es.tutorCorrectionJoin} ${correctedQuote}${explanation ? ` ${explanation}` : ""}`
               : `${copy.es.tutorCorrectionIntro} ${correctedQuote}${explanation ? ` ${explanation}` : ""}`,
@@ -99,7 +102,7 @@ export function ChatWorkspace() {
         feedbackAborts.current.delete(messageId);
       }
     }
-  }, [locale]);
+  }, []);
 
   const requestReply = useCallback(async (context: ConversationMessage[], version: number) => {
     chatAbort.current?.abort();
@@ -301,6 +304,7 @@ export function ChatWorkspace() {
         onClose={closeTutor}
         locale={locale}
         conversation={messages}
+        isConversationReplyPending={isReplyPending}
         feedbacks={feedbacks}
         messages={tutorMessages}
         onMessagesChange={setTutorMessages}

@@ -2,7 +2,7 @@
 
 ## Objetivo y alcance
 
-Exponer desde NestJS las operaciones para el chat en inglés y el tutor de corrección. En desarrollo y pruebas el backend hablará con el modelo local LFM 2.6B servido por llama.cpp en `http://127.0.0.1:8080`. La integración con el proveedor de modelos quedará intercambiable para usar OpenRouter cuando se configure su modelo y clave. El backend no guardará conversaciones en esta fase.
+Exponer desde NestJS las operaciones para el chat en inglés y el tutor de corrección. En desarrollo y pruebas el backend hablará con el modelo local configurado en llama.cpp en `http://127.0.0.1:8080`; la verificación manual actual usa `LFM2.5-8B-A1B-Q4_K_M.gguf` mediante el alias `LFM2.5`. La integración con el proveedor de modelos quedará intercambiable para usar OpenRouter cuando se configure su modelo y clave. El backend no guardará conversaciones en esta fase.
 
 Referencias: `Conversy-ai/Fases/Fase-1/Fase-1.md`, `Fase-1-Diagrana.md` y `Conversy-ai/Tecnologías.md`. Plan de interfaz: [web/docs/fase-1-plan.md](../../web/docs/fase-1-plan.md).
 

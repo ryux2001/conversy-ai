@@ -30,7 +30,7 @@ The conversation partner and the tutor are separate roles: the partner keeps the
 
 - Phase 1 contains one chat type: temporary chat. Messages and tutor feedback live in browser memory and are cleared when a new chat starts or the page reloads.
 - The web client uses Next.js and the API uses NestJS.
-- Local model testing uses llama.cpp at `http://127.0.0.1:8080/v1`. The loaded GGUF filename is `LFM2.5-2.6B-Q4_0.gguf`; the server currently advertises the API model ID `LFM2.5-350M-ToMoE`.
+- Local model testing uses llama.cpp at `http://127.0.0.1:8080/v1`. Current manual verification uses `LFM2.5-8B-A1B-Q4_K_M.gguf` with the `LFM2.5` alias in backend configuration.
 - OpenRouter is the planned configurable hosted provider. Its credentials must stay on the backend.
 - Audio and WebGPU are later-phase work.
 - Product name and logo remain open.

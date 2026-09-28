@@ -14,6 +14,23 @@ export interface TutorMessage {
   id: string;
   role: TutorRole;
   content: string;
+  kind?: 'correction';
+  targetMessageId?: string;
+  correction?: TutorCorrection;
+}
+
+export interface TutorCorrectionIssue {
+  original: string;
+  replacement: string;
+  type: 'grammar' | 'spelling' | 'capitalization' | 'punctuation' | 'naturalness';
+}
+
+export interface TutorCorrection {
+  targetMessageId: string;
+  hasCorrection: boolean;
+  suggestion: string | null;
+  explanation: string;
+  issues?: TutorCorrectionIssue[];
 }
 
 const MAX_MESSAGES = 24;
@@ -85,7 +102,60 @@ export function parseTutorMessages(value: unknown, field = 'tutorMessages'): Tut
   if (messages.at(-1)?.role !== 'user') {
     throw new BadRequestException('La última pregunta del tutor debe ser del usuario.');
   }
-  return messages as TutorMessage[];
+  const rawMessages = value as unknown[];
+  return messages.map((message, index) => {
+    if (message.role !== 'tutor') return message as TutorMessage;
+    const raw = asRecord(rawMessages[index], `${field}[${index}]`);
+    if (raw.kind !== 'correction') return message as TutorMessage;
+    if (
+      typeof raw.targetMessageId !== 'string' ||
+      raw.targetMessageId.length === 0 ||
+      raw.targetMessageId.length > 80 ||
+      typeof raw.correction !== 'object' ||
+      raw.correction === null ||
+      Array.isArray(raw.correction)
+    ) return message as TutorMessage;
+
+    const correction = raw.correction as Record<string, unknown>;
+    if (
+      correction.targetMessageId !== raw.targetMessageId ||
+      typeof correction.hasCorrection !== 'boolean' ||
+      !(typeof correction.suggestion === 'string' || correction.suggestion === null) ||
+      typeof correction.explanation !== 'string'
+    ) return message as TutorMessage;
+
+    const validTypes = ['grammar', 'spelling', 'capitalization', 'punctuation', 'naturalness'] as const;
+    const issues = Array.isArray(correction.issues)
+      ? correction.issues.flatMap((entry): TutorCorrectionIssue[] => {
+        if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return [];
+        const issue = entry as Record<string, unknown>;
+        if (
+          typeof issue.original !== 'string' ||
+          typeof issue.replacement !== 'string' ||
+          typeof issue.type !== 'string' ||
+          !validTypes.includes(issue.type as typeof validTypes[number])
+        ) return [];
+        return [{
+          original: issue.original,
+          replacement: issue.replacement,
+          type: issue.type as TutorCorrectionIssue['type'],
+        }];
+      })
+      : undefined;
+
+    return {
+      ...message,
+      kind: 'correction',
+      targetMessageId: raw.targetMessageId,
+      correction: {
+        targetMessageId: raw.targetMessageId,
+        hasCorrection: correction.hasCorrection,
+        suggestion: typeof correction.suggestion === 'string' ? correction.suggestion : null,
+        explanation: correction.explanation,
+        ...(issues ? { issues } : {}),
+      },
+    } as TutorMessage;
+  });
 }
 
 export function parseLocale(value: unknown): Locale {

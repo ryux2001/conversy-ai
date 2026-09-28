@@ -29,8 +29,10 @@ export function FeedbackCard({
     let errorMessage = text.feedbackError;
     switch (state.code) {
       case "NETWORK_ERROR":
-      case "LLM_UNAVAILABLE":
         errorMessage = text.feedbackErrorNetwork;
+        break;
+      case "LLM_UNAVAILABLE":
+        errorMessage = text.feedbackErrorModel;
         break;
       case "LLM_PROVIDER_ERROR":
         errorMessage = text.feedbackErrorProvider;
@@ -47,6 +49,9 @@ export function FeedbackCard({
         break;
       case "LLM_INVALID_JSON":
         errorMessage = text.feedbackErrorInvalid;
+        break;
+      case "LLM_FEEDBACK_INCONSISTENT":
+        errorMessage = text.feedbackErrorInconsistent;
         break;
     }
 

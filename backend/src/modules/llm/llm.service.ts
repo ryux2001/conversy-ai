@@ -54,7 +54,7 @@ export class LlmService {
       ? process.env.LOCAL_AI_URL || 'http://127.0.0.1:8080/v1'
       : 'https://openrouter.ai/api/v1';
     const model = localOnly
-      ? process.env.LOCAL_AI_MODEL || 'LFM2.5-350M-ToMoE'
+      ? process.env.LOCAL_AI_MODEL || 'LFM2.5'
       : process.env.OPENROUTER_MODEL;
     const apiKey = localOnly ? undefined : process.env.OPENROUTER_API_KEY;
 

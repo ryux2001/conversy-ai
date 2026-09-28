@@ -72,8 +72,9 @@ function tutorErrorMessage(code: string | null, locale: Locale) {
   const text = copy[locale];
   switch (code) {
     case "NETWORK_ERROR":
-    case "LLM_UNAVAILABLE":
       return text.tutorErrorNetwork;
+    case "LLM_UNAVAILABLE":
+      return text.tutorErrorModel;
     case "LLM_PROVIDER_ERROR":
       return text.tutorErrorProvider;
     case "LLM_TIMEOUT":
@@ -93,6 +94,7 @@ export function TutorDialog({
   onClose,
   locale,
   conversation,
+  isConversationReplyPending,
   feedbacks,
   messages,
   onMessagesChange,
@@ -102,6 +104,7 @@ export function TutorDialog({
   onClose: () => void;
   locale: Locale;
   conversation: ConversationMessage[];
+  isConversationReplyPending: boolean;
   feedbacks: Record<string, FeedbackState>;
   messages: TutorMessage[];
   onMessagesChange: Dispatch<SetStateAction<TutorMessage[]>>;
@@ -170,7 +173,7 @@ export function TutorDialog({
   function sendQuestion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const content = question.trim();
-    if (!content || isPending) return;
+    if (!content || isPending || isConversationReplyPending) return;
     const userMessage: TutorMessage = { id: crypto.randomUUID(), role: "user", content };
     const tutorContext = [...messages, userMessage];
     const chatContext = conversation.slice(-24);
@@ -233,7 +236,9 @@ export function TutorDialog({
             </div>
           </details>
 
-          <p className="tutor-guidance">{text.askTutor}</p>
+          {isConversationReplyPending ? (
+            <p className="tutor-waiting" role="status">{text.tutorWaitingForConversation}</p>
+          ) : <p className="tutor-guidance">{text.askTutor}</p>}
           <div className="tutor-message-list" role="log" aria-label={text.tutorMessagesRegion} aria-live="polite" aria-relevant="additions text">
             {messages.map((message) => (
               <article className={`tutor-message tutor-message--${message.role}`} key={message.id}>
@@ -277,9 +282,9 @@ export function TutorDialog({
             onKeyDown={handleKeyDown}
             placeholder={text.tutorPlaceholder}
             maxLength={4_000}
-            disabled={isPending}
+            disabled={isPending || isConversationReplyPending}
           />
-          <button className="send-button send-button--tutor" type="submit" aria-label={text.sendQuestion} disabled={isPending || !question.trim()}>
+          <button className="send-button send-button--tutor" type="submit" aria-label={text.sendQuestion} disabled={isPending || isConversationReplyPending || !question.trim()}>
             <Icon name="send" size={17} />
           </button>
         </form>

@@ -9,6 +9,13 @@ export interface TutorFeedback {
   hasCorrection: boolean;
   suggestion: string | null;
   explanation: string;
+  issues?: TutorCorrectionIssue[];
+}
+
+export interface TutorCorrectionIssue {
+  original: string;
+  replacement: string;
+  type: "grammar" | "spelling" | "capitalization" | "punctuation" | "naturalness";
 }
 
 export type FeedbackState =

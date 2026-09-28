@@ -16,7 +16,7 @@ export class ChatService {
         { role: 'system', content: CONVERSATION_PROMPT },
         ...messages.slice(-16).map(({ role, content }) => ({ role, content })),
       ],
-      { maxTokens: 384, temperature: 0.65 },
+      { maxTokens: 1024, temperature: 0.65 },
     );
 
     return {
