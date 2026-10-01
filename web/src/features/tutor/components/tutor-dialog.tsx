@@ -90,6 +90,7 @@ function tutorErrorMessage(code: string | null, locale: Locale) {
 }
 
 export function TutorDialog({
+  idPrefix,
   open,
   onClose,
   locale,
@@ -100,6 +101,7 @@ export function TutorDialog({
   onMessagesChange,
   onFeedback,
 }: {
+  idPrefix: "text" | "voice";
   open: boolean;
   onClose: () => void;
   locale: Locale;
@@ -199,6 +201,7 @@ export function TutorDialog({
 
   const recentFeedback = Object.values(feedbacks)
     .filter((entry): entry is Extract<FeedbackState, { status: "ready" }> => entry.status === "ready")
+    .filter(({ feedback }) => feedback.hasCorrection)
     .slice(-4)
     .reverse();
 
@@ -206,7 +209,7 @@ export function TutorDialog({
     <dialog
       ref={dialogRef}
       className="tutor-dialog"
-      aria-labelledby="tutor-title"
+      aria-labelledby={`tutor-title-${idPrefix}`}
       onCancel={(event) => { event.preventDefault(); onClose(); }}
     >
       <div className="tutor-panel">
@@ -214,7 +217,7 @@ export function TutorDialog({
           <div className="tutor-header__identity">
             <div className="tutor-header__mark"><Icon name="sparkle" size={18} /></div>
             <div>
-              <h2 id="tutor-title">{text.tutorTitle}</h2>
+              <h2 id={`tutor-title-${idPrefix}`}>{text.tutorTitle}</h2>
               <p>{text.tutorDescription}</p>
             </div>
           </div>
@@ -273,9 +276,9 @@ export function TutorDialog({
         </div>
 
         <form className="tutor-composer" onSubmit={sendQuestion}>
-          <label className="visually-hidden" htmlFor="tutor-question">{text.tutorPlaceholder}</label>
+          <label className="visually-hidden" htmlFor={`tutor-question-${idPrefix}`}>{text.tutorPlaceholder}</label>
           <textarea
-            id="tutor-question"
+            id={`tutor-question-${idPrefix}`}
             rows={1}
             value={question}
             onChange={(event) => setQuestion(event.target.value)}

@@ -8,7 +8,10 @@ export async function requestFeedback(
 ): Promise<TutorFeedback> {
   const result = await postJson<{ feedback: TutorFeedback }>(
     "/tutor/evaluate",
-    { messages },
+    {
+      messages: messages.filter((message) => message.content.trim()).map(({ id, role, content }) => ({ id, role, content })),
+      ...(messages.at(-1)?.modality === "audio" ? { latestMessageModality: "audio" } : {}),
+    },
     signal,
   );
   return result.feedback;
@@ -22,7 +25,11 @@ export async function requestTutorReply(
 ): Promise<{ message: TutorMessage; feedback?: TutorFeedback }> {
   const result = await postJson<{ message: TutorMessage; feedback?: TutorFeedback }>(
     "/tutor/reply",
-    { conversation, tutorMessages, latestFeedback },
+    {
+      conversation: conversation.filter((message) => message.content.trim()).map(({ id, role, content }) => ({ id, role, content })),
+      tutorMessages,
+      latestFeedback,
+    },
     signal,
   );
   return result;

@@ -14,9 +14,15 @@ export interface TutorMessage {
   id: string;
   role: TutorRole;
   content: string;
-  kind?: 'correction';
+  kind?: 'correction' | 'pronunciation';
   targetMessageId?: string;
   correction?: TutorCorrection;
+  pronunciation?: TutorPronunciation;
+}
+
+export interface TutorPronunciation {
+  targetMessageId: string;
+  issues: Array<{ word: string; phoneme?: string; score: number }>;
 }
 
 export interface TutorCorrectionIssue {
@@ -106,6 +112,32 @@ export function parseTutorMessages(value: unknown, field = 'tutorMessages'): Tut
   return messages.map((message, index) => {
     if (message.role !== 'tutor') return message as TutorMessage;
     const raw = asRecord(rawMessages[index], `${field}[${index}]`);
+    if (raw.kind === 'pronunciation') {
+      if (
+        typeof raw.targetMessageId !== 'string' || raw.targetMessageId.length === 0 || raw.targetMessageId.length > 80 ||
+        typeof raw.pronunciation !== 'object' || raw.pronunciation === null || Array.isArray(raw.pronunciation)
+      ) return message as TutorMessage;
+      const data = raw.pronunciation as Record<string, unknown>;
+      if (data.targetMessageId !== raw.targetMessageId || !Array.isArray(data.issues) || data.issues.length > 1) {
+        return message as TutorMessage;
+      }
+      const issues = data.issues.flatMap((entry): TutorPronunciation['issues'] => {
+        if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return [];
+        const issue = entry as Record<string, unknown>;
+        if (
+          typeof issue.word !== 'string' || issue.word.length === 0 || issue.word.length > 80 ||
+          (issue.phoneme !== undefined && (typeof issue.phoneme !== 'string' || issue.phoneme.length > 20)) ||
+          typeof issue.score !== 'number' || !Number.isFinite(issue.score) || issue.score < 0 || issue.score > 100
+        ) return [];
+        return [{ word: issue.word, ...(typeof issue.phoneme === 'string' ? { phoneme: issue.phoneme } : {}), score: issue.score }];
+      });
+      return {
+        ...message,
+        kind: 'pronunciation',
+        targetMessageId: raw.targetMessageId,
+        pronunciation: { targetMessageId: raw.targetMessageId, issues },
+      } as TutorMessage;
+    }
     if (raw.kind !== 'correction') return message as TutorMessage;
     if (
       typeof raw.targetMessageId !== 'string' ||

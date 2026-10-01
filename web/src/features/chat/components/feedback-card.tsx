@@ -7,10 +7,12 @@ export function FeedbackCard({
   state,
   locale,
   onRetry,
+  showAudioNoCorrection,
 }: {
   state: FeedbackState | undefined;
   locale: Locale;
   onRetry: () => void;
+  showAudioNoCorrection?: boolean;
 }) {
   const text = copy[locale];
   if (!state) return null;
@@ -61,6 +63,14 @@ export function FeedbackCard({
         <button className="text-action" type="button" onClick={onRetry}>
           <Icon name="retry" size={14} /> {text.retry}
         </button>
+      </div>
+    );
+  }
+
+  if (showAudioNoCorrection && !state.feedback.hasCorrection) {
+    return (
+      <div className="feedback-card" role="status">
+        <span>{text.voiceNoCorrection}</span>
       </div>
     );
   }

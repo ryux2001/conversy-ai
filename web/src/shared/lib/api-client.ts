@@ -49,3 +49,63 @@ export async function postJson<T>(
 
   return payload as T;
 }
+
+export async function postMultipart<T>(
+  path: string,
+  body: FormData,
+  signal?: AbortSignal,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/${path.replace(/^\/+/, "")}`, {
+      method: "POST",
+      body,
+      signal,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ApiRequestError("NETWORK_ERROR", "NETWORK_ERROR");
+  }
+
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const errorPayload = typeof payload === "object" && payload !== null
+      ? payload as { message?: unknown; code?: unknown }
+      : {};
+    const message = errorPayload.message;
+    throw new ApiRequestError(
+      Array.isArray(message) ? message.join(" ") : typeof message === "string" ? message : `HTTP ${response.status}`,
+      typeof errorPayload.code === "string" ? errorPayload.code : "UNKNOWN",
+      response.status,
+    );
+  }
+  return payload as T;
+}
+
+export async function postBinary(path: string, body: unknown, signal?: AbortSignal): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/${path.replace(/^\/+/, "")}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new ApiRequestError("NETWORK_ERROR", "NETWORK_ERROR");
+  }
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null);
+    const errorPayload = typeof payload === "object" && payload !== null
+      ? payload as { message?: unknown; code?: unknown }
+      : {};
+    const message = errorPayload.message;
+    throw new ApiRequestError(
+      Array.isArray(message) ? message.join(" ") : typeof message === "string" ? message : `HTTP ${response.status}`,
+      typeof errorPayload.code === "string" ? errorPayload.code : "UNKNOWN",
+      response.status,
+    );
+  }
+  return response.blob();
+}

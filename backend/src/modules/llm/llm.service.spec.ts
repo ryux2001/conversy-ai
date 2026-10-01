@@ -65,4 +65,21 @@ describe('LlmService provider failures', () => {
     expect(error).toBeInstanceOf(BadGatewayException);
     expect((error as BadGatewayException).getResponse()).toMatchObject({ code: 'LLM_OUTPUT_TRUNCATED' });
   });
+
+  it('uses the recommended sampling profile for local LFM2.5 without unsupported thinking flags', async () => {
+    vi.stubEnv('LOCAL_AI_MODEL', 'LFM2.5');
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      model: 'LFM2.5',
+      choices: [{ finish_reason: 'stop', message: { content: 'Sure, let’s talk about football.' } }],
+    }), { status: 200 }));
+
+    await new LlmService().completeWithMetadata(
+      [{ role: 'user', content: 'Can we talk about football?' }],
+      { maxTokens: 1024, purpose: 'conversation' },
+    );
+
+    const requestBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({ temperature: 0.2, top_k: 80, repeat_penalty: 1.05, max_tokens: 1024 });
+    expect(requestBody).not.toHaveProperty('chat_template_kwargs.enable_thinking');
+  });
 });

@@ -8,10 +8,21 @@ import { LlmService } from './../src/modules/llm/llm.service.js';
 describe('Phase 1 API (e2e)', () => {
   let app: INestApplication<App>;
   const complete = vi.fn(async () => 'Hello! What would you like to talk about today?');
+  const completeWithMetadata = vi.fn(async () => ({
+    content: await complete(),
+    finishReason: 'stop',
+    model: 'test-model',
+  }));
 
   beforeEach(async () => {
     complete.mockReset();
     complete.mockResolvedValue('Hello! What would you like to talk about today?');
+    completeWithMetadata.mockReset();
+    completeWithMetadata.mockImplementation(async () => ({
+      content: await complete(),
+      finishReason: 'stop',
+      model: 'test-model',
+    }));
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -19,11 +30,7 @@ describe('Phase 1 API (e2e)', () => {
       .overrideProvider(LlmService)
       .useValue({
         complete,
-        completeWithMetadata: async () => ({
-          content: await complete(),
-          finishReason: 'stop',
-          model: 'test-model',
-        }),
+        completeWithMetadata,
       })
       .compile();
 
@@ -44,6 +51,53 @@ describe('Phase 1 API (e2e)', () => {
       .expect(({ body }) => {
         expect(body.message.role).toBe('assistant');
         expect(body.message.content).toBe('Hello! What would you like to talk about today?');
+      });
+  });
+
+  it('retries a truncated chat reply once with a larger output limit', async () => {
+    completeWithMetadata
+      .mockResolvedValueOnce({ content: '', finishReason: 'length', model: 'test-model' })
+      .mockResolvedValueOnce({ content: 'Sure, let’s talk about football.', finishReason: 'stop', model: 'test-model' });
+
+    await request(app.getHttpServer())
+      .post('/api/chat/reply')
+      .send({ messages: [{ id: 'u1', role: 'user', content: 'Hello there.' }] })
+      .expect(201)
+      .expect(({ body }) => expect(body.message.content).toBe('Sure, let’s talk about football.'));
+
+    expect(completeWithMetadata).toHaveBeenNthCalledWith(1, expect.any(Array), { maxTokens: 1024, purpose: 'conversation' });
+    expect(completeWithMetadata).toHaveBeenNthCalledWith(2, expect.any(Array), { maxTokens: 2048, purpose: 'conversation' });
+  });
+
+  it('tells Conversy when the learner turn is a voice transcription', async () => {
+    await request(app.getHttpServer())
+      .post('/api/chat/reply')
+      .send({
+        messages: [{ id: 'voice-u1', role: 'user', content: 'We can talk about football.' }],
+        latestMessageModality: 'audio',
+      })
+      .expect(201);
+
+    expect(completeWithMetadata).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ role: 'system', content: expect.stringContaining('speech transcription') }),
+      ]),
+      { maxTokens: 1024, purpose: 'conversation' },
+    );
+  });
+
+  it('does not repeat an uncertain Whisper word when asking for clarification', async () => {
+    complete.mockResolvedValueOnce('I’m not sure what you mean by everseyarsalana. Could you explain?');
+
+    await request(app.getHttpServer())
+      .post('/api/chat/reply')
+      .send({
+        messages: [{ id: 'voice-u1', role: 'user', content: 'We can talk about of everseyarsalana.' }],
+        latestMessageModality: 'audio',
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.message.content).toBe('I’m not sure what you mean by that word. Could you explain?');
       });
   });
 
@@ -185,6 +239,77 @@ describe('Phase 1 API (e2e)', () => {
           issues: [{ original: "don't likes", replacement: "doesn't like", type: 'grammar' }],
         });
       });
+  });
+
+  it('accepts a minimal grammar correction for voice while preserving an uncertain word', async () => {
+    complete.mockResolvedValueOnce(JSON.stringify({
+      hasCorrection: true,
+      suggestion: 'We can talk about everseyarsalana.',
+      explanation: 'La palabra extra no era necesaria en esta frase.',
+      issues: [{ original: 'of', replacement: '', type: 'grammar' }],
+    }));
+
+    await request(app.getHttpServer())
+      .post('/api/tutor/evaluate')
+      .send({
+        messages: [{ id: 'voice-u1', role: 'user', content: 'We can talk about of everseyarsalana.' }],
+        latestMessageModality: 'audio',
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.feedback.suggestion).toBe('We can talk about everseyarsalana.');
+        expect(body.feedback.issues).toEqual([{ original: 'of', replacement: '', type: 'grammar' }]);
+      });
+
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('explains the minimal voice correction without greeting or re-evaluating the sentence', async () => {
+    await request(app.getHttpServer())
+      .post('/api/tutor/reply')
+      .send({
+        conversation: [{ id: 'voice-u1', role: 'user', content: 'We can talk about of everseyarsalana.' }],
+        latestFeedback: {
+          targetMessageId: 'voice-u1',
+          hasCorrection: true,
+          suggestion: 'We can talk about everseyarsalana.',
+          explanation: 'Después de “about” no se usa “of” en esta expresión.',
+          issues: [{ original: 'of', replacement: '', type: 'grammar' }],
+        },
+        tutorMessages: [
+          { id: 'q1', role: 'user', content: '¿Por qué hiciste esa corrección?' },
+        ],
+      })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.message.content).toContain('Quité “of” después de “about”');
+        expect(body.message.content).toContain('Conservé el resto de la transcripción');
+      });
+
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('rejects a voice correction that guesses the meaning of an unfamiliar word', async () => {
+    const speculativeFeedback = JSON.stringify({
+      hasCorrection: true,
+      suggestion: 'We can talk about every other assignment.',
+      explanation: 'Se cambió el final de la frase para mejorar la gramática.',
+      issues: [{
+        original: 'We can talk about of everseyarsalana',
+        replacement: 'We can talk about every other assignment',
+        type: 'grammar',
+      }],
+    });
+    complete.mockResolvedValueOnce(speculativeFeedback).mockResolvedValueOnce(speculativeFeedback);
+
+    await request(app.getHttpServer())
+      .post('/api/tutor/evaluate')
+      .send({
+        messages: [{ id: 'voice-u2', role: 'user', content: 'I can discuss of everseyarsalana.' }],
+        latestMessageModality: 'audio',
+      })
+      .expect(502)
+      .expect(({ body }) => expect(body.code).toBe('LLM_FEEDBACK_INCONSISTENT'));
   });
 
   it('rejects a punctuation explanation when the question mark was already present', async () => {

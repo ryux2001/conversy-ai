@@ -1,4 +1,4 @@
-import { BadGatewayException, Injectable } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
   parseConversation,
@@ -6,13 +6,17 @@ import {
   parseTutorMessages,
 } from '../../common/conversation.js';
 import { LlmService } from '../llm/llm.service.js';
+import type { PronunciationIssue } from '../speech/speech.types.js';
 import type { LlmCompletion, LlmMessage } from '../llm/llm.types.js';
+import { getConfiguredLlmProfile } from '../llm/llm-profile.js';
 import { evaluationPrompt } from './prompts/evaluation.prompt.js';
 import { tutorConversationPrompt } from './prompts/tutor-conversation.prompt.js';
 
 const FEEDBACK_FORMAT = { type: 'json_object' };
 const EVALUATION_TOKEN_LIMITS = [1536, 3072] as const;
+const LFM_EVALUATION_TOKEN_LIMITS = [4096, 6144] as const;
 const TUTOR_REPLY_TOKEN_LIMITS = [1024, 2048] as const;
+const LFM_TUTOR_REPLY_TOKEN_LIMITS = [2048, 4096] as const;
 const ENGLISH_NARRATIVE_WORDS = new Set([
   'a', 'an', 'and', 'answer', 'are', 'as', 'because', 'both', 'but', 'can', 'correct', 'could',
   'do', 'favorite', 'for', 'from', 'great', 'hello', 'have', 'i', 'if', 'in', 'is', 'it', 'its',
@@ -46,7 +50,7 @@ const TUTOR_ISSUE_TYPES = new Set([
   'grammar', 'spelling', 'capitalization', 'punctuation', 'naturalness',
 ]);
 
-function parseTutorIssues(value: unknown): TutorFeedback['issues'] {
+function parseTutorIssues(value: unknown, spokenMessage = false): TutorFeedback['issues'] {
   if (!Array.isArray(value)) return undefined;
   return value.flatMap((entry) => {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return [];
@@ -55,7 +59,8 @@ function parseTutorIssues(value: unknown): TutorFeedback['issues'] {
       typeof issue.original !== 'string' ||
       typeof issue.replacement !== 'string' ||
       typeof issue.type !== 'string' ||
-      !TUTOR_ISSUE_TYPES.has(issue.type)
+      !TUTOR_ISSUE_TYPES.has(issue.type) ||
+      (spokenMessage && issue.type !== 'grammar' && issue.type !== 'naturalness')
     ) return [];
     return [{
       original: issue.original,
@@ -175,7 +180,7 @@ function claimsPunctuationChange(explanation: string) {
     /\b(?:puntuacion|signo|interrogacion|exclamacion)\b.{0,60}\b(?:anadid|agregad|eliminad|quitad|corregid|faltaba|faltan)\w*\b/u.test(normalized);
 }
 
-function feedbackMatchesSource(source: string, feedback: TutorFeedback) {
+function feedbackMatchesSource(source: string, feedback: TutorFeedback, spokenMessage = false) {
   const explanation = normalizedFragment(feedback.explanation);
   const claimsPunctuation = claimsPunctuationChange(explanation);
   const issues = feedback.issues ?? [];
@@ -184,6 +189,31 @@ function feedbackMatchesSource(source: string, feedback: TutorFeedback) {
     return feedback.suggestion === null && issues.length === 0 && !claimsPunctuation;
   }
   if (!feedback.suggestion || feedback.suggestion.trim() === source.trim() || issues.length === 0) return false;
+
+  if (spokenMessage) {
+    if (issues.length !== 1) return false;
+    const sourceWords = normalizedFragment(source).match(/[\p{L}\p{N}']+/gu) ?? [];
+    const suggestionWords = normalizedFragment(feedback.suggestion).match(/[\p{L}\p{N}']+/gu) ?? [];
+    let prefix = 0;
+    while (prefix < sourceWords.length && prefix < suggestionWords.length && sourceWords[prefix] === suggestionWords[prefix]) prefix += 1;
+    let suffix = 0;
+    while (
+      suffix < sourceWords.length - prefix &&
+      suffix < suggestionWords.length - prefix &&
+      sourceWords[sourceWords.length - 1 - suffix] === suggestionWords[suggestionWords.length - 1 - suffix]
+    ) suffix += 1;
+
+    const originalChange = sourceWords.slice(prefix, sourceWords.length - suffix).join(' ');
+    const replacementChange = suggestionWords.slice(prefix, suggestionWords.length - suffix).join(' ');
+    const issue = issues[0]!;
+    if (
+      !originalChange || originalChange.split(' ').length > 3 || replacementChange.split(' ').length > 3 ||
+      normalizedFragment(issue.original) !== originalChange ||
+      normalizedFragment(issue.replacement) !== replacementChange ||
+      (issue.type !== 'grammar' && issue.type !== 'naturalness')
+    ) return false;
+    return true;
+  }
 
   const sourceNormalized = normalizedFragment(source);
   const suggestionNormalized = normalizedFragment(feedback.suggestion);
@@ -201,6 +231,23 @@ function feedbackMatchesSource(source: string, feedback: TutorFeedback) {
     }
     return true;
   });
+}
+
+function clearSpokenPrepositionError(source: string, targetMessageId: string): TutorFeedback | null {
+  if (!/\b(?:talk|speak)\s+about\s+of\b/iu.test(source)) return null;
+  return {
+    targetMessageId,
+    hasCorrection: true,
+    suggestion: source.replace(/\babout\s+of\b/iu, (phrase) => phrase.replace(/\s+of$/iu, '')),
+    explanation: 'Después de “about” no se usa “of” en esta expresión. Conservé el resto de la transcripción tal como se reconoció.',
+    issues: [{ original: 'of', replacement: '', type: 'grammar' }],
+  };
+}
+
+function asksToExplainCorrection(question: string) {
+  const normalized = normalizeQuestion(question);
+  return /\b(?:explica\w*|explicar|explain\w*|why|por que)\b.{0,80}\b(?:correccion|corregiste|corregi|correction|corrected|cambiaste)\b/u.test(normalized) ||
+    /\b(?:correccion|correction)\b.{0,80}\b(?:explica\w*|explain\w*|why|por que)\b/u.test(normalized);
 }
 
 function lastMessageSource(question: string): 'practice' | 'tutor' | 'ambiguous' {
@@ -222,9 +269,34 @@ export class TutorService {
     const request = parseObject(body, 'body');
     const messages = parseConversation(request.messages);
     const latest = messages.at(-1)!;
-    const feedback = await this.evaluateMessages(messages, latest.id);
+    const modality = request.latestMessageModality;
+    if (modality !== undefined && modality !== 'audio' && modality !== 'text') {
+      throw new BadRequestException({ code: 'INVALID_MESSAGE_MODALITY', message: 'El origen del mensaje no es válido.' });
+    }
+    if (modality === 'audio') {
+      const deterministicCorrection = clearSpokenPrepositionError(latest.content, latest.id);
+      if (deterministicCorrection) return { feedback: deterministicCorrection };
+    }
+    const feedback = await this.evaluateMessages(messages, latest.id, modality === 'audio');
 
     return { feedback };
+  }
+
+  async explainPronunciation(issue: PronunciationIssue, transcript: string): Promise<string> {
+    return this.llm.complete([
+      {
+        role: 'system',
+        content: 'Eres un tutor de pronunciación de inglés. Responde en español con una explicación breve y amable (máximo 2 frases) sobre el problema acústico que el analizador detectó. La evidencia es el objeto recibido: no inventes otros errores, sonidos, reglas, causas ni puntuaciones. Si hay fonema, da un consejo articulatorio concreto solo para ese fonema; si no hay, sugiere practicar la palabra completa. No corrijas gramática ni respondas como el compañero de conversación.',
+      },
+      {
+        role: 'user',
+        content: JSON.stringify({ transcription: transcript, detectedIssue: issue }),
+      },
+    ], {
+      maxTokens: 180,
+      temperature: getConfiguredLlmProfile() === 'lfm25-thinking' ? 0.2 : 0.25,
+      purpose: 'pronunciation',
+    });
   }
 
   async reply(body: unknown) {
@@ -243,6 +315,33 @@ export class TutorService {
       ? this.parseSuppliedFeedback(request.latestFeedback, latestPracticeMessage.id)
       : undefined;
     const latestQuestion = tutorMessages.at(-1)!.content;
+    const removedRedundantAboutOf = suppliedFeedback?.issues?.some((issue) =>
+      issue.original.toLowerCase() === 'of' && issue.replacement === '' &&
+      /\babout\s+of\b/iu.test(latestPracticeMessage?.content ?? ''),
+    ) ?? false;
+    if (suppliedFeedback?.hasCorrection && asksToExplainCorrection(latestQuestion) && removedRedundantAboutOf) {
+      return {
+        message: {
+          id: randomUUID(),
+          role: 'tutor' as const,
+          content: 'Quité “of” después de “about”; en esta expresión, “about” no lleva “of”. Conservé el resto de la transcripción, incluida la última palabra. Si esa palabra no coincide con lo que dijiste, edita la transcripción y vuelve a revisarla.',
+        },
+        feedback: suppliedFeedback,
+      };
+    }
+    if (suppliedFeedback && !suppliedFeedback.hasCorrection && asksToExplainCorrection(latestQuestion)) {
+      const needsTranscriptConfirmation = /confirm\w*|transcrip\w*|palabra desconocida|unknown word/iu.test(suppliedFeedback.explanation);
+      return {
+        message: {
+          id: randomUUID(),
+          role: 'tutor' as const,
+          content: needsTranscriptConfirmation
+            ? 'No hice una corrección segura porque no pude reconocer la última palabra con suficiente confianza. Puedes editar la transcripción y volveré a revisarla.'
+            : 'No hice ninguna corrección porque no detecté un error claro en tu última frase.',
+        },
+        feedback: suppliedFeedback,
+      };
+    }
     const needsSuggestedReply = asksForSuggestedReply(latestQuestion);
     const latestStructuredCorrectionMessage = tutorMessages.slice(0, -1).reverse()
       .find((message) => message.role === 'tutor' && message.kind === 'correction');
@@ -387,7 +486,10 @@ export class TutorService {
     ];
     let completion: LlmCompletion | undefined;
     let mustCorrectTutorContract = false;
-    for (const maxTokens of TUTOR_REPLY_TOKEN_LIMITS) {
+    const replyTokenLimits = getConfiguredLlmProfile() === 'lfm25-thinking'
+      ? LFM_TUTOR_REPLY_TOKEN_LIMITS
+      : TUTOR_REPLY_TOKEN_LIMITS;
+    for (const maxTokens of replyTokenLimits) {
       completion = await this.llm.completeWithMetadata(mustCorrectTutorContract
         ? [
           ...llmMessages,
@@ -400,7 +502,8 @@ export class TutorService {
         ]
         : llmMessages, {
         maxTokens,
-        temperature: 0.45,
+        temperature: getConfiguredLlmProfile() === 'lfm25-thinking' ? 0.2 : 0.45,
+        purpose: 'tutor-reply',
       });
       if (completion.finishReason === 'length' || !completion.content) continue;
       if (!violatesTutorContract(completion.content) &&
@@ -437,9 +540,10 @@ export class TutorService {
   private async evaluateMessages(
     messages: Array<{ id: string; role: 'user' | 'assistant'; content: string }>,
     targetMessageId: string,
+    spokenMessage = false,
   ): Promise<TutorFeedback> {
     const baseMessages: LlmMessage[] = [
-      { role: 'system', content: evaluationPrompt() },
+      { role: 'system', content: evaluationPrompt(spokenMessage) },
       ...messages.slice(-8).map(({ role, content }) => ({ role, content })),
     ];
     let mustCorrectLanguage = false;
@@ -448,7 +552,10 @@ export class TutorService {
     let feedbackFailure = false;
     let lastCompletion: LlmCompletion | undefined;
 
-    for (const maxTokens of EVALUATION_TOKEN_LIMITS) {
+    const evaluationTokenLimits = getConfiguredLlmProfile() === 'lfm25-thinking'
+      ? LFM_EVALUATION_TOKEN_LIMITS
+      : EVALUATION_TOKEN_LIMITS;
+    for (const maxTokens of evaluationTokenLimits) {
       const retryInstructions: LlmMessage[] = [];
       if (mustCorrectLanguage) {
         retryInstructions.push({
@@ -459,22 +566,25 @@ export class TutorService {
       if (mustCorrectFeedback) {
         retryInstructions.push({
           role: 'system',
-          content: 'Revisa que cada issue.original aparezca en la frase original y cada issue.replacement aparezca en suggestion. Solo afirma que cambió la puntuación si los signos realmente difieren. No inventes cambios. Si no puedes justificar una corrección, devuelve hasCorrection false, suggestion null e issues vacío.',
+          content: spokenMessage
+            ? 'La transcripción de voz debe conservar todas las palabras fuera del error. Si propones una corrección, cambia una única secuencia gramatical de hasta tres palabras, pon solo esas palabras en issues[0].original y issues[0].replacement, y usa type grammar o naturalness. No cambies palabras desconocidas, no marques ortografía y no adivines. Si no puedes cumplirlo, devuelve hasCorrection false, suggestion null e issues vacío y pide confirmar la transcripción en español.'
+            : 'Revisa que cada issue.original aparezca en la frase original y cada issue.replacement aparezca en suggestion. Solo afirma que cambió la puntuación si los signos realmente difieren. No inventes cambios. Si no puedes justificar una corrección, devuelve hasCorrection false, suggestion null e issues vacío.',
         });
       }
       lastCompletion = await this.llm.completeWithMetadata(retryInstructions.length
         ? [...baseMessages, ...retryInstructions]
         : baseMessages, {
         maxTokens,
-        temperature: 0,
+        temperature: 0.2,
         responseFormat: FEEDBACK_FORMAT,
+        purpose: 'tutor-evaluation',
       });
-      const parsed = this.parseFeedback(lastCompletion.content, targetMessageId);
+      const parsed = this.parseFeedback(lastCompletion.content, targetMessageId, spokenMessage);
       const source = messages.at(-1)!.content;
       if (parsed && hasEnglishTutorNarrative(parsed.explanation)) {
         languageFailure = true;
         mustCorrectLanguage = true;
-      } else if (parsed && !feedbackMatchesSource(source, parsed)) {
+      } else if (parsed && !feedbackMatchesSource(source, parsed, spokenMessage)) {
         feedbackFailure = true;
         mustCorrectFeedback = true;
       } else if (parsed) {
@@ -512,7 +622,7 @@ export class TutorService {
     });
   }
 
-  private parseFeedback(raw: string, targetMessageId: string): TutorFeedback | null {
+  private parseFeedback(raw: string, targetMessageId: string, spokenMessage = false): TutorFeedback | null {
     try {
       const jsonStart = raw.indexOf('{');
       const jsonEnd = raw.lastIndexOf('}');
@@ -531,7 +641,7 @@ export class TutorService {
         hasCorrection: parsed.hasCorrection,
         suggestion: parsed.hasCorrection ? parsed.suggestion!.trim() : null,
         explanation: parsed.explanation.trim(),
-        ...(Array.isArray(parsed.issues) ? { issues: parseTutorIssues(parsed.issues) ?? [] } : {}),
+        ...(Array.isArray(parsed.issues) ? { issues: parseTutorIssues(parsed.issues, spokenMessage) ?? [] } : {}),
       };
     } catch {
       return null;

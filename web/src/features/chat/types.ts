@@ -2,6 +2,21 @@ export interface ConversationMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  modality?: "text" | "audio";
+  audioUrl?: string;
+  audioError?: string;
+  audioState?: "transcribing" | "transcription-error" | "ready" | "synthesizing" | "audio-error";
+}
+
+export interface PronunciationIssue {
+  word: string;
+  phoneme?: string;
+  score: number;
+}
+
+export interface PronunciationFeedback {
+  targetMessageId: string;
+  issues: PronunciationIssue[];
 }
 
 export interface TutorFeedback {

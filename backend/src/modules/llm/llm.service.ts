@@ -6,14 +6,17 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type { LlmCompletion, LlmMessage, LlmOptions } from './llm.types.js';
+import { getConfiguredLlmProfile } from './llm-profile.js';
 
 interface ChatCompletionResponse {
   choices?: Array<{
     finish_reason?: string | null;
     message?: {
       content?: string | Array<{ type?: string; text?: string }> | null;
+      reasoning_content?: string | null;
     };
   }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
   model?: string;
   error?: { message?: string };
 }
@@ -56,6 +59,9 @@ export class LlmService {
     const model = localOnly
       ? process.env.LOCAL_AI_MODEL || 'LFM2.5'
       : process.env.OPENROUTER_MODEL;
+    const lfm25Profile = localOnly && getConfiguredLlmProfile() === 'lfm25-thinking'
+      ? { temperature: 0.2, topK: 80, repeatPenalty: 1.05 }
+      : undefined;
     const apiKey = localOnly ? undefined : process.env.OPENROUTER_API_KEY;
 
     if (!localOnly && !apiKey) {
@@ -83,6 +89,7 @@ export class LlmService {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const startedAt = Date.now();
 
     try {
       const response = await fetch(endpoint, {
@@ -94,11 +101,11 @@ export class LlmService {
         body: JSON.stringify({
           model,
           messages,
-          temperature: options.temperature ?? 0.4,
+          temperature: options.temperature ?? lfm25Profile?.temperature ?? 0.4,
           max_tokens: options.maxTokens ?? 384,
           stream: false,
+          ...(lfm25Profile ? { top_k: lfm25Profile.topK, repeat_penalty: lfm25Profile.repeatPenalty } : {}),
           ...(options.responseFormat ? { response_format: options.responseFormat } : {}),
-          ...(localOnly ? { chat_template_kwargs: { enable_thinking: false } } : {}),
         }),
         signal: controller.signal,
       });
@@ -128,10 +135,19 @@ export class LlmService {
           : Array.isArray(content)
             ? content.map((part) => (part.type === 'text' ? part.text ?? '' : '')).join('')
             : '';
+      const finishReason = choice?.finish_reason ?? null;
+      if (localOnly && (finishReason === 'length' || !text.trim())) {
+        this.logger.warn(
+          `Local inference purpose=${options.purpose ?? 'unspecified'} model=${payload?.model ?? model} ` +
+          `finish_reason=${finishReason ?? 'missing'} prompt_tokens=${payload?.usage?.prompt_tokens ?? 'unknown'} ` +
+          `completion_tokens=${payload?.usage?.completion_tokens ?? 'unknown'} visible_chars=${text.trim().length} ` +
+          `reasoning_chars=${choice?.message?.reasoning_content?.length ?? 0} duration_ms=${Date.now() - startedAt}`,
+        );
+      }
 
       return {
         content: text.trim(),
-        finishReason: choice?.finish_reason ?? null,
+        finishReason,
         model: payload?.model ?? null,
       };
     } catch (error) {

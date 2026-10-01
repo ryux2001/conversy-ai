@@ -8,9 +8,11 @@ import { Icon } from "@/shared/components/icon";
 
 export function Sidebar({
   locale,
+  activeMode,
   onNewConversation,
 }: {
   locale: Locale;
+  activeMode: "text" | "voice";
   onNewConversation: () => void;
 }) {
   const text = copy[locale];
@@ -44,7 +46,7 @@ export function Sidebar({
         className="mobile-menu-toggle"
         type="button"
         aria-expanded={isMobileMenuOpen}
-        aria-controls="mobile-sidebar-menu"
+        aria-controls={`mobile-sidebar-menu-${activeMode}`}
         aria-label={isMobileMenuOpen ? text.closeMobileMenu : text.openMobileMenu}
         onClick={() => setIsMobileMenuOpen((open) => !open)}
       >
@@ -61,16 +63,16 @@ export function Sidebar({
 
       <div className="sidebar-section-label">{text.yourSpace}</div>
       <nav className="side-navigation">
-        <Link className="side-link side-link--active" href="/" aria-current="page" aria-label={text.selectedPractice}>
+        <Link className={`side-link${activeMode === "text" ? " side-link--active" : ""}`} href="/" aria-current={activeMode === "text" ? "page" : undefined} aria-label={activeMode === "text" ? text.selectedPractice : text.practice}>
           <Icon name="chat" size={18} />
           <span>{text.practice}</span>
-          <span className="active-dot" aria-hidden="true" />
+          {activeMode === "text" ? <span className="active-dot" aria-hidden="true" /> : null}
         </Link>
-        <span className="side-link side-link--disabled" aria-disabled="true">
+        <Link className={`side-link${activeMode === "voice" ? " side-link--active" : ""}`} href="/voice" aria-current={activeMode === "voice" ? "page" : undefined} aria-label={activeMode === "voice" ? text.selectedVoicePractice : text.voicePractice}>
           <Icon name="voice" size={18} />
           <span>{text.voicePractice}</span>
-          <span className="soon-label">{text.comingSoon}</span>
-        </span>
+          {activeMode === "voice" ? <span className="active-dot" aria-hidden="true" /> : null}
+        </Link>
       </nav>
 
       <div className="sidebar-bottom">
@@ -81,19 +83,19 @@ export function Sidebar({
         </div>
       </div>
 
-      <div id="mobile-sidebar-menu" className="mobile-sidebar-menu" hidden={!isMobileMenuOpen}>
+      <div id={`mobile-sidebar-menu-${activeMode}`} className="mobile-sidebar-menu" hidden={!isMobileMenuOpen}>
         <div className="sidebar-section-label">{text.yourSpace}</div>
         <nav className="side-navigation" aria-label={text.sidebarLabel}>
-          <Link className="side-link side-link--active" href="/" aria-current="page" aria-label={text.selectedPractice} onClick={() => setIsMobileMenuOpen(false)}>
+          <Link className={`side-link${activeMode === "text" ? " side-link--active" : ""}`} href="/" aria-current={activeMode === "text" ? "page" : undefined} aria-label={activeMode === "text" ? text.selectedPractice : text.practice} onClick={() => setIsMobileMenuOpen(false)}>
             <Icon name="chat" size={18} />
             <span>{text.practice}</span>
-            <span className="active-dot" aria-hidden="true" />
+            {activeMode === "text" ? <span className="active-dot" aria-hidden="true" /> : null}
           </Link>
-          <span className="side-link side-link--disabled" aria-disabled="true">
+          <Link className={`side-link${activeMode === "voice" ? " side-link--active" : ""}`} href="/voice" aria-current={activeMode === "voice" ? "page" : undefined} aria-label={activeMode === "voice" ? text.selectedVoicePractice : text.voicePractice} onClick={() => setIsMobileMenuOpen(false)}>
             <Icon name="voice" size={18} />
             <span>{text.voicePractice}</span>
-            <span className="soon-label">{text.comingSoon}</span>
-          </span>
+            {activeMode === "voice" ? <span className="active-dot" aria-hidden="true" /> : null}
+          </Link>
         </nav>
         <div className="sidebar-bottom">
           <div className="temporary-note-icon"><Icon name="clock" size={16} /></div>

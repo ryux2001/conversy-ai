@@ -7,5 +7,6 @@ import { TutorService } from './tutor.service.js';
   imports: [LlmModule],
   controllers: [TutorController],
   providers: [TutorService],
+  exports: [TutorService],
 })
 export class TutorModule {}

@@ -31,6 +31,25 @@
 $ pnpm install
 ```
 
+## Conversy speech
+
+The current web client runs Whisper transcription locally in the browser using WebGPU. NestJS receives the recognized text for conversation and tutor evaluation, not the recording. `SPEECH_STT_MODEL`, `SPEECH_STT_URL`, and an STT API key are not required by this flow.
+
+The backend still contains a legacy `POST /api/speech/transcribe` adapter, but the web client no longer calls it. Its optional configuration, for isolated backend integration tests only, is:
+
+```dotenv
+SPEECH_STT_PROVIDER=local
+SPEECH_STT_URL=http://127.0.0.1:8081/v1/audio/transcriptions
+SPEECH_STT_MODEL=<your-asr-model-id>
+SPEECH_STT_TIMEOUT_MS=60000
+```
+
+Do not configure this adapter to enable browser Whisper. See `web/README.md` for the active voice setup. The legacy endpoint does not persist uploaded audio.
+
+Conversy voice replies use the browser's local speech synthesis; the current web client does not call the backend TTS endpoint.
+
+Pronunciation assessment is off by default. The optional Azure adapter requires `SPEECH_PRONUNCIATION_PROVIDER=azure`, `AZURE_SPEECH_ENDPOINT`, and `AZURE_SPEECH_KEY`; enabling it sends learner audio to that Azure resource. Do not enable it without an explicit provider decision and validation with labelled audio samples. LLM-based guesses from the transcript are not used as pronunciation evidence.
+
 ## Compile and run the project
 
 ```bash
