@@ -182,7 +182,7 @@ describe('Phase 1 API (e2e)', () => {
       .post('/api/tutor/reply')
       .send({
         conversation: [
-          { id: 'u1', role: 'user', content: 'Yesterday I visit the stadium' },
+          { id: 'u1', role: 'user', content: 'Yesterday I visit the stadium.' },
           { id: 'a1', role: 'assistant', content: 'That sounds fun. Did you watch a match?' },
         ],
         tutorMessages: [
@@ -191,11 +191,11 @@ describe('Phase 1 API (e2e)', () => {
             role: 'tutor',
             kind: 'correction',
             targetMessageId: 'u1',
-            content: 'Apunte: “Yesterday I visit the stadium”, escribe: “Yesterday, I visited the stadium.”',
+            content: 'Apunte: “Yesterday I visit the stadium.”, escribe: “Yesterday I visited the stadium.”',
             correction: {
               targetMessageId: 'u1',
               hasCorrection: true,
-              suggestion: 'Yesterday, I visited the stadium.',
+              suggestion: 'Yesterday I visited the stadium.',
               explanation: 'Se usa pasado por la expresión temporal.',
               issues: [{ original: 'visit', replacement: 'visited', type: 'grammar' }],
             },
@@ -262,6 +262,131 @@ describe('Phase 1 API (e2e)', () => {
       });
 
     expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('evaluates only the identified learner message and labels earlier turns as reference', async () => {
+    complete.mockResolvedValueOnce(JSON.stringify({
+      hasCorrection: false,
+      suggestion: null,
+      explanation: 'La frase está bien escrita.',
+      issues: [],
+    }));
+
+    await request(app.getHttpServer())
+      .post('/api/tutor/evaluate')
+      .send({
+        messages: [
+          { id: 'u1', role: 'user', content: 'Eden hazard maybe?' },
+          { id: 'a1', role: 'assistant', content: 'Eden Hazard is a great player.' },
+          { id: 'u2', role: 'user', content: 'Could be the form of dribbling.' },
+        ],
+      })
+      .expect(201);
+
+    const [messages] = completeWithMetadata.mock.calls[0]!;
+    expect(messages).toHaveLength(2);
+    expect(JSON.parse(messages[1]!.content)).toEqual({
+      targetMessage: { id: 'u2', content: 'Could be the form of dribbling.', modality: 'text' },
+      referenceContext: [
+        { id: 'u1', speaker: 'alumno', content: 'Eden hazard maybe?' },
+        { id: 'a1', speaker: 'Conversy', content: 'Eden Hazard is a great player.' },
+      ],
+    });
+  });
+
+  it('replaces a leaked evaluator instruction with a verified learner-facing fallback', async () => {
+    complete.mockResolvedValueOnce(JSON.stringify({
+      hasCorrection: true,
+      suggestion: 'Eden Hazard maybe?',
+      explanation: 'La clave explanation de tu respuesta JSON debe estar íntegramente en español.',
+      issues: [{ original: 'hazard', replacement: 'Hazard', type: 'capitalization' }],
+    })).mockResolvedValueOnce(JSON.stringify({
+      hasCorrection: true,
+      suggestion: 'Eden Hazard maybe?',
+      explanation: 'Los nombres propios llevan mayúscula inicial.',
+      issues: [{ original: 'hazard', replacement: 'Hazard', type: 'capitalization' }],
+    }));
+
+    await request(app.getHttpServer())
+      .post('/api/tutor/evaluate')
+      .send({ messages: [{ id: 'u1', role: 'user', content: 'Eden hazard maybe?' }] })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.feedback.explanation).toBe('Cambié “hazard” por “Hazard”. El resto de la frase se mantiene igual.');
+        expect(body.feedback.explanation).not.toContain('clave explanation');
+      });
+
+    expect(completeWithMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses a verified Spanish fallback when the correction explanation is in English', async () => {
+    complete.mockResolvedValueOnce(JSON.stringify({
+      hasCorrection: true,
+      suggestion: 'Yesterday I visited the stadium.',
+      explanation: 'Yesterday indicates past tense.',
+      issues: [{ original: 'visit', replacement: 'visited', type: 'grammar' }],
+    }));
+
+    await request(app.getHttpServer())
+      .post('/api/tutor/evaluate')
+      .send({ messages: [{ id: 'u1', role: 'user', content: 'Yesterday I visit the stadium.' }] })
+      .expect(201)
+      .expect(({ body }) => {
+        expect(body.feedback.suggestion).toBe('Yesterday I visited the stadium.');
+        expect(body.feedback.explanation).toBe('Cambié “visit” por “visited”. El resto de la frase se mantiene igual.');
+      });
+
+    expect(completeWithMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it('explains the last Conversy message and carries its target into follow-up questions', async () => {
+    complete.mockResolvedValueOnce(JSON.stringify({
+      targetMessageId: 'a2',
+      explanation: 'Dice que su regate era espectacular y te pregunta qué aspecto te llamó más la atención.',
+    })).mockResolvedValueOnce(JSON.stringify({
+      targetMessageId: 'a2',
+      explanation: 'Se refiere al regate de Eden Hazard y quiere saber qué parte te gustó más.',
+    }));
+    const conversation = [
+      { id: 'u1', role: 'user', content: 'Eden hazard maybe?' },
+      { id: 'a1', role: 'assistant', content: 'Eden Hazard is indeed a great choice; what do you think defines his best moments?' },
+      { id: 'u2', role: 'user', content: 'Could be the form of dribbling, thats was beautiful' },
+      { id: 'a2', role: 'assistant', content: 'His dribbling was indeed spectacular—what part of it stood out most?' },
+    ];
+    const firstQuestion = { id: 'q1', role: 'user', content: 'Qué me quiso decir en el último mensaje?' };
+    let tutorHistory = [firstQuestion];
+
+    const firstReply = await request(app.getHttpServer())
+      .post('/api/tutor/reply')
+      .send({ conversation, tutorMessages: tutorHistory })
+      .expect(201);
+    expect(firstReply.body.message.content).toContain('su regate era espectacular');
+    expect(firstReply.body.message.task).toMatchObject({
+      intent: 'explain_message',
+      source: 'practice_assistant',
+      targetMessageId: 'a2',
+    });
+    const [firstRequest] = completeWithMetadata.mock.calls[0]!;
+    expect(firstRequest).toHaveLength(2);
+    expect(firstRequest[1]!.content).toContain('His dribbling was indeed spectacular');
+    expect(firstRequest[0]!.content).toContain('Tu única tarea es explicar el mensaje objetivo');
+    tutorHistory = [
+      firstQuestion,
+      firstReply.body.message,
+      { id: 'q2', role: 'user', content: '¿Y qué me está preguntando exactamente?' },
+    ];
+
+    const secondReply = await request(app.getHttpServer())
+      .post('/api/tutor/reply')
+      .send({
+        conversation: [...conversation, { id: 'a3', role: 'assistant', content: 'A newer message arrived later.' }],
+        tutorMessages: tutorHistory,
+      })
+      .expect(201);
+    expect(secondReply.body.message.content).toContain('regate de Eden Hazard');
+    expect(secondReply.body.message.task.targetMessageId).toBe('a2');
+    const [followUpMessages] = completeWithMetadata.mock.calls[1]!;
+    expect(followUpMessages[1]!.content).toContain('"targetMessageId":"a2"');
   });
 
   it('explains the minimal voice correction without greeting or re-evaluating the sentence', async () => {

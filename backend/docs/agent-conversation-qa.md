@@ -55,3 +55,38 @@ Se probaron ambos flujos en la interfaz real. Conversy respondió de forma perti
 - Comprobaciones automatizadas actuales: backend typecheck, lint y 6 pruebas unitarias; backend E2E 16/16; frontend ESLint y build de producción `next build --webpack` correctos (el build también ejecutó TypeScript).
 - La repetición en navegador del control de edición queda pendiente; la transcripción original todavía no se puede comparar con el audio capturado porque la grabación solo está en el navegador del usuario.
 - No se repitió una conversación en vivo con LFM2.5 tras estos últimos cambios: en esta comprobación no había un servidor escuchando en los puertos locales 3001/8080. Los nuevos comportamientos deterministas y el sanitizado de respuesta sí quedaron cubiertos por E2E; los probes previos con LFM2.5 constan arriba.
+
+## Corrección de contexto, evaluación y explicaciones del tutor — 2026-10-01
+
+### Cambios verificados
+
+- Las tareas del tutor resuelven intención, autor y mensaje objetivo por ID. Las respuestas incluyen metadatos opcionales de tarea y el parser conserva/valida esos datos al recibir el historial.
+- Las explicaciones de mensajes se generan en una solicitud aislada: la pregunta y el objetivo exacto van juntos en un payload de usuario; el prompt de sistema de esta tarea es breve. Se comprueba el ID devuelto antes de presentar una respuesta.
+- Las repreguntas como «¿Y qué me está preguntando exactamente?» se reconocen como explicaciones de seguimiento y mantienen el objetivo anterior aunque el chat principal haya avanzado.
+- La evaluación recibe el mensaje objetivo separado del contexto de referencia. La sugerencia se valida mediante diferencias ordenadas de tokens: cada modificación debe corresponder a un `issue`, con tipo compatible, y no puede incorporar texto de turnos anteriores.
+- Si la corrección coincide con el mensaje pero la explicación del modelo filtra instrucciones internas o sale en inglés, se sustituye por una descripción breve en español derivada únicamente de los cambios validados. Si la corrección no coincide, se conserva el error `LLM_FEEDBACK_INCONSISTENT`; no se publica una sugerencia no verificada.
+- Se añadieron regresiones para contexto de tarea, seguimiento de referencia, fuga de instrucciones, idioma de explicación y cambios de texto/puntuación. La UI muestra errores diferenciados de explicación/tarea.
+
+### Prueba real con LFM2.5-8B-A1B-Q4_K_M
+
+Se ejecutó el backend compilado localmente contra el modelo llama.cpp local. En tres conversaciones nuevas de fútbol, Conversy respondió normalmente y se preguntó al tutor qué significaba su última respuesta y qué estaba preguntando. Los IDs elegidos por el tutor fueron `qa4-a1`, `qa5-a1` y `qa6-a1`; en las tres repreguntas el resultado mantuvo ese mismo ID y `reason: follow_up`. Las respuestas fueron breves y en español; hubo variación en la calidad de la paráfrasis (en una respuesta describió la pregunta con poca precisión y en otra mencionó innecesariamente el contexto de la práctica), por lo que no se considera perfecta la fidelidad semántica del modelo.
+
+También se probó un pedido sobre café: Conversy contestó «Sure, I can get that for you. Would you like any milk or sugar?» y el tutor explicó correctamente que ofrecía traer algo y preguntaba si quería leche o azúcar. Para `I like football.`, el tutor de evaluación devolvió `hasCorrection: false`, sin sugerir cambios; la explicación en inglés se sustituyó por «No detecté errores claros en esta frase.»
+
+### Fallos observados y límites
+
+- **Regresión encontrada y corregida durante la prueba:** «¿Y qué me está preguntando exactamente?» se interpretaba como ayuda general; podía perder el mensaje previo. Ahora se clasifica como `explain_message`, y conserva el ID anterior. El caso quedó en pruebas unitarias y E2E.
+- **Explicación inicial con contexto mal priorizado:** el modelo dijo que no tenía acceso al mensaje aunque el ID se había resuelto correctamente. Se movieron pregunta y mensaje objetivo al último payload de usuario y se acortó el prompt específico de explicación. Después de ello el modelo sí explicó respuestas reales y mantuvo sus IDs.
+- **Explicación en inglés / texto de instrucciones:** si la diferencia entre original y sugerencia es válida, el usuario recibe una explicación de reserva factual, sin causa gramatical inventada ni texto interno.
+- **Corrección gramatical real aún no validada:** `Yesterday I visit the stadium.` y `Eden hazard maybe?` produjeron `LLM_FEEDBACK_INCONSISTENT` en las últimas pruebas en vivo. La protección impide mostrar correcciones incompatibles, pero estos dos ejemplos demuestran que el modelo local puede abstenerse/fracasar al producir `issues` precisos. Se registra como límite funcional pendiente; no se declara resuelta la calidad de todas las correcciones.
+- Una ejecución anterior intentó enviar una conversación terminada en un mensaje del asistente y recibió HTTP 400 (`El último mensaje de la conversación debe ser del usuario`). Fue un payload de prueba inválido, no una respuesta del modelo ni un fallo de la app; las repeticiones siguientes usaron el contrato correcto.
+
+### Pruebas automatizadas de esta implementación
+
+- Backend unit tests: 17/17.
+- Backend E2E: 20/20.
+- Backend build y Oxlint: correctos.
+- Web ESLint: correcto.
+- Web `next build --webpack`: correcto al ejecutar el build fuera del sandbox. La primera ejecución restringida falló al resolver `@huggingface/transformers` por permisos de lectura; el paquete estaba enlazado y el build completó al usar el acceso autorizado. Web ESLint y el TypeScript del build pasaron.
+- La página local devolvió HTTP 200 y abrió correctamente, pero esta pasada no envió mensajes desde la UI; el flujo semántico se comprobó directamente mediante la API local. La interacción de extremo a extremo desde el navegador queda pendiente.
+- `git diff --check`: correcto.

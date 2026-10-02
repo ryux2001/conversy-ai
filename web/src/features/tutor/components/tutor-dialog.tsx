@@ -84,6 +84,10 @@ function tutorErrorMessage(code: string | null, locale: Locale) {
       return text.tutorErrorIncomplete;
     case "LLM_TUTOR_CONTRACT_INVALID":
       return text.tutorErrorLanguage;
+    case "LLM_TUTOR_INSTRUCTION_LEAK":
+      return text.tutorErrorInstructionLeak;
+    case "LLM_TUTOR_TARGET_INVALID":
+      return text.tutorErrorTarget;
     default:
       return text.tutorError;
   }

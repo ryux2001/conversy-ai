@@ -49,6 +49,12 @@ export function FeedbackCard({
       case "LLM_TUTOR_CONTRACT_INVALID":
         errorMessage = text.feedbackErrorLanguage;
         break;
+      case "LLM_TUTOR_INSTRUCTION_LEAK":
+        errorMessage = text.feedbackErrorInstructionLeak;
+        break;
+      case "LLM_TUTOR_TARGET_INVALID":
+        errorMessage = text.feedbackErrorTarget;
+        break;
       case "LLM_INVALID_JSON":
         errorMessage = text.feedbackErrorInvalid;
         break;

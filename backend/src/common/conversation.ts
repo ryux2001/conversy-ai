@@ -4,6 +4,15 @@ export type ConversationRole = 'user' | 'assistant';
 export type TutorRole = 'user' | 'tutor';
 export type Locale = 'en' | 'es';
 
+export type TutorTaskIntent = 'explain_message' | 'translate_message' | 'suggest_reply' | 'review_message' | 'explain_correction' | 'recall_message' | 'general_help' | 'clarify';
+export type TutorTaskSource = 'practice_assistant' | 'practice_user' | 'tutor' | null;
+export interface TutorTaskReference {
+  intent: TutorTaskIntent;
+  source: TutorTaskSource;
+  targetMessageId: string | null;
+  reason: 'explicit' | 'follow_up' | 'inferred' | 'ambiguous';
+}
+
 export interface ConversationMessage {
   id: string;
   role: ConversationRole;
@@ -18,6 +27,7 @@ export interface TutorMessage {
   targetMessageId?: string;
   correction?: TutorCorrection;
   pronunciation?: TutorPronunciation;
+  task?: TutorTaskReference;
 }
 
 export interface TutorPronunciation {
@@ -112,6 +122,8 @@ export function parseTutorMessages(value: unknown, field = 'tutorMessages'): Tut
   return messages.map((message, index) => {
     if (message.role !== 'tutor') return message as TutorMessage;
     const raw = asRecord(rawMessages[index], `${field}[${index}]`);
+    const task = parseTutorTaskReference(raw.task);
+    const parsedMessage = task ? { ...message, task } : message;
     if (raw.kind === 'pronunciation') {
       if (
         typeof raw.targetMessageId !== 'string' || raw.targetMessageId.length === 0 || raw.targetMessageId.length > 80 ||
@@ -132,13 +144,13 @@ export function parseTutorMessages(value: unknown, field = 'tutorMessages'): Tut
         return [{ word: issue.word, ...(typeof issue.phoneme === 'string' ? { phoneme: issue.phoneme } : {}), score: issue.score }];
       });
       return {
-        ...message,
+        ...parsedMessage,
         kind: 'pronunciation',
         targetMessageId: raw.targetMessageId,
         pronunciation: { targetMessageId: raw.targetMessageId, issues },
       } as TutorMessage;
     }
-    if (raw.kind !== 'correction') return message as TutorMessage;
+    if (raw.kind !== 'correction') return parsedMessage as TutorMessage;
     if (
       typeof raw.targetMessageId !== 'string' ||
       raw.targetMessageId.length === 0 ||
@@ -176,7 +188,7 @@ export function parseTutorMessages(value: unknown, field = 'tutorMessages'): Tut
       : undefined;
 
     return {
-      ...message,
+      ...parsedMessage,
       kind: 'correction',
       targetMessageId: raw.targetMessageId,
       correction: {
@@ -188,6 +200,32 @@ export function parseTutorMessages(value: unknown, field = 'tutorMessages'): Tut
       },
     } as TutorMessage;
   });
+}
+
+function parseTutorTaskReference(value: unknown): TutorTaskReference | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const task = value as Record<string, unknown>;
+  const intents: TutorTaskIntent[] = [
+    'explain_message', 'translate_message', 'suggest_reply', 'review_message',
+    'explain_correction', 'recall_message', 'general_help', 'clarify',
+  ];
+  const sources: TutorTaskSource[] = ['practice_assistant', 'practice_user', 'tutor', null];
+  const reasons: TutorTaskReference['reason'][] = ['explicit', 'follow_up', 'inferred', 'ambiguous'];
+  if (
+    typeof task.intent !== 'string' || !intents.includes(task.intent as TutorTaskIntent) ||
+    !sources.includes(task.source as TutorTaskSource) ||
+    !(typeof task.targetMessageId === 'string' || task.targetMessageId === null) ||
+    (typeof task.targetMessageId === 'string' && (task.targetMessageId.length === 0 || task.targetMessageId.length > 80)) ||
+    typeof task.reason !== 'string' || !reasons.includes(task.reason as TutorTaskReference['reason']) ||
+    (task.source === null && task.targetMessageId !== null) ||
+    (task.source !== null && typeof task.targetMessageId !== 'string')
+  ) return undefined;
+  return {
+    intent: task.intent as TutorTaskIntent,
+    source: task.source as TutorTaskSource,
+    targetMessageId: task.targetMessageId as string | null,
+    reason: task.reason as TutorTaskReference['reason'],
+  };
 }
 
 export function parseLocale(value: unknown): Locale {

@@ -23,12 +23,14 @@ export async function requestTutorReply(
   signal: AbortSignal,
   latestFeedback?: TutorFeedback,
 ): Promise<{ message: TutorMessage; feedback?: TutorFeedback }> {
+  const latestPracticeMessage = conversation.slice().reverse().find((message) => message.role === "user");
   const result = await postJson<{ message: TutorMessage; feedback?: TutorFeedback }>(
     "/tutor/reply",
     {
       conversation: conversation.filter((message) => message.content.trim()).map(({ id, role, content }) => ({ id, role, content })),
       tutorMessages,
       latestFeedback,
+      latestMessageModality: latestPracticeMessage?.modality ?? "text",
     },
     signal,
   );
