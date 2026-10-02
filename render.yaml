@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: conversy-api
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: pnpm install --frozen-lockfile && pnpm run build
+    startCommand: pnpm run start:prod
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: AI_LOCAL_ONLY
+        value: "false"
+      - key: LLM_TIMEOUT_MS
+        value: "90000"
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false

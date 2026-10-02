@@ -5,3 +5,7 @@
 .env.example
 .env
 .env*
+
+# Keep documentation-only environment templates in Git.
+!.env.example
+!.env.*.example
