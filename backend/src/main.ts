@@ -22,7 +22,7 @@ async function bootstrap() {
       .split(',')
       .map((origin) => origin.trim()),
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
   const port = Number(process.env.PORT ?? 3001);
